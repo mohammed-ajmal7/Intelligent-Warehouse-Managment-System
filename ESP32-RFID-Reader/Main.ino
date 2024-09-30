@@ -1,40 +1,50 @@
-#include <SPI.h>        // Library for SPI communication
-#include <MFRC522.h>    // Library for RFID communication
-#include <WiFi.h>       // Library for ESP32 WiFi connection
-#include <HTTPClient.h> // Library for sending HTTP requests
+#include <SPI.h>
+#include <MFRC522.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
 
+#define SS_PIN 5    // SDA/SS pin connected to GPIO 5
+#define RST_PIN 22  // RST pin connected to GPIO 22
 
-#define SS_PIN 21  // SDA pin connected to GPIO 21
-#define RST_PIN 22 // RST pin connected to GPIO 22
+MFRC522 rfid(SS_PIN, RST_PIN); // Create instance of MFRC522 class
+MFRC522::MIFARE_Key key;       // Create MIFARE_Key structure to hold security key
 
+// WiFi Credentials
+const char* ssid = "Galaxy M33 5G";
+const char* password = "aju12345";
 
-const char* ssid = "your_SSID";       // Replace with your WiFi network name
-const char* password = "your_PASSWORD"; // Replace with your WiFi password
+// Server URL for POST request
+const String serverUrl = "http://192.168.235.249:3000/api/rfid";
 
+void setup() { 
+  Serial.begin(115200);         // Initialize serial communications
+  SPI.begin(18, 19, 23);        // Initialize SPI bus with SCK, MISO, and MOSI pins
+  rfid.PCD_Init();              // Initialize the RFID reader
 
-const String serverUrl = "http://192.168.31.195:3000/api/rfid"; // Replace with your server endpoint
+  // Set all key bytes to 0xFF for default authentication key
+  for (byte i = 0; i < 6; i++) {
+    key.keyByte[i] = 0xFF;
+  }
 
+  Serial.println(F("Scanning MIFARE Classic NUID for Entry"));
 
-void setup() {
-  Serial.begin(115200); // Start serial communication for debugging
-  SPI.begin();          // Initialize SPI bus
-  rfid.PCD_Init();      // Initialize the RFID reader
-  
   // Connect to WiFi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);        // Wait for WiFi connection
+    delay(1000);  // Wait for WiFi connection
     Serial.println("Connecting to WiFi...");
   }
   Serial.println("Connected to WiFi");
 }
 
-
 void loop() {
-  // Check if a new RFID tag is present and can be read
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
+  // Reset the loop if no new card is present on the reader
+  if (!rfid.PICC_IsNewCardPresent())
     return;
-  }
+
+  // Check if the NUID has been read
+  if (!rfid.PICC_ReadCardSerial())
+    return;
 
   // Read the UID from the RFID tag
   String uid = "";
@@ -43,25 +53,74 @@ void loop() {
   }
   Serial.println("RFID Tag UID: " + uid);    // Print the UID to the serial monitor
 
-  // Send the UID to the server via HTTP POST request
-  if (WiFi.status() == WL_CONNECTED) {       // Ensure the ESP32 is still connected to WiFi
+  // Since we only handle entry, we set the entryType to "Entry"
+  String entryType = "Entry";
+
+  // Send the UID and entry_type to the server via HTTP POST request
+  sendRfidData(uid, entryType);
+
+  // Halt the RFID card to avoid multiple reads of the same card
+  rfid.PICC_HaltA();
+
+  // Stop encryption on PCD (RFID reader)
+  rfid.PCD_StopCrypto1();
+}
+
+/**
+ * Send the UID and entry_type to the server via HTTP POST request.
+ */
+void sendRfidData(String uid, String entryType) {
+  if (WiFi.status() == WL_CONNECTED) {  // Ensure the ESP32 is connected to WiFi
     HTTPClient http;
     http.begin(serverUrl);
     http.addHeader("Content-Type", "application/json");
 
     // Prepare the JSON request body
-    String requestBody = "{\"uid\":\"" + uid + "\"}";
-    int httpResponseCode = http.POST(requestBody); // Send the POST request
+    String requestBody = "{\"uid\":\"" + uid + "\", \"entry_type\":\"" + entryType + "\"}";
+    Serial.println("Sending data to server: " + requestBody);
 
+    // Send the POST request
+    int httpResponseCode = http.POST(requestBody);
+
+    // Check the response from the server
     if (httpResponseCode > 0) {
-      String response = http.getString();     // Read the server's response
+      String response = http.getString();  // Read the server's response
       Serial.println("Server Response: " + response);
-    } else {
-      Serial.println("Error in sending POST");
-    }
-    http.end();                              // End the HTTP connection
-  }
 
-  // Halt the RFID card to avoid multiple reads of the same card
-  rfid.PICC_HaltA();
+      // Check if the response indicates a conflict (entry already exists)
+      if (httpResponseCode == 409) {
+        Serial.println("Conflict: " + response); // Entry already exists
+      } else {
+        Serial.println("Data sent successfully."); // Successful entry
+      }
+    } else {
+      Serial.println("Error in sending POST: " + String(httpResponseCode));
+    }
+
+    http.end();  // End the HTTP connection
+  } else {
+    Serial.println("WiFi not connected, unable to send data.");
+  }
+}
+
+/**
+ * Helper function to print a byte array as hex values to the Serial monitor.
+ */
+void printHex(byte *buffer, byte bufferSize) {
+  for (byte i = 0; i < bufferSize; i++) {
+    Serial.print(buffer[i] < 0x10 ? " 0" : " ");
+    Serial.print(buffer[i], HEX);
+  }
+  Serial.println();
+}
+
+/**
+ * Helper function to print a byte array as decimal values to the Serial monitor.
+ */
+void printDec(byte *buffer, byte bufferSize) {
+  for (byte i = 0; i < bufferSize; i++) {
+    Serial.print(' ');
+    Serial.print(buffer[i], DEC);
+  }
+  Serial.println();
 }
