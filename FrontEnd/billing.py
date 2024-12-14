@@ -11,7 +11,7 @@ class BillClass:
     def __init__(self, root):
         self.root = root
         self.root.geometry("1350x700+0+0")
-        self.root.title("SMART WAREHOUSE MANAGEMENT SYSTEM | DEVELOPED BY KUSUMANJALI AND SNEHA PRIYA")
+        self.root.title("SMART WAREHOUSE MANAGEMENT SYSTEM")
         self.root.config(bg="white")
         self.cart_list=[]
         self.chk_print=0
